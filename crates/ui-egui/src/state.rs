@@ -1119,6 +1119,10 @@ pub struct UiState {
     /// Selection-tool context menu opened by a plain canvas right-click.
     #[serde(default)]
     pub canvas_tool_menu: Option<crate::canvas_tool_menu::CanvasToolMenu>,
+    /// One-finger touch pan in progress: the finger's last screen position. Fingers pan and
+    /// pinch-zoom the canvas and never paint (Photoshop's touch behaviour); `None` = no touch.
+    #[serde(skip)]
+    pub touch_pan: Option<egui::Pos2>,
     /// The brush is a per-tool option (the Brush, the Eraser and every retouching tool each keep
     /// their own size, hardness, tip and dynamics, as in Photoshop): the tool whose brush the
     /// session brush holds, and the other tools' saved brushes.
@@ -1285,6 +1289,7 @@ impl Default for UiState {
             brush_picker_size: None,
             layer_menu: None,
             canvas_tool_menu: None,
+            touch_pan: None,
             brush_tool: Tool::Brush,
             tool_brushes: Vec::new(),
             clone_source: None,

@@ -3008,6 +3008,34 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
         }
     }
 
+    // Touch: fingers pan the view and never paint (Photoshop's touch defaults). egui emulates
+    // pointer presses from touch, so tool gestures belonging to a touch gesture are dropped
+    // below (`touch_frame` covers the release frame, `touch_pan` the drag frames).
+    let touch_frame = {
+        let events = ui.input(|i| i.events.clone());
+        let mut pan = app.ui.touch_pan;
+        for e in &events {
+            if let egui::Event::Touch { phase, pos, .. } = e {
+                match phase {
+                    egui::TouchPhase::Start => {
+                        if pan.is_none() && rect.contains(*pos) {
+                            pan = Some(*pos);
+                        }
+                    }
+                    egui::TouchPhase::Move => {
+                        if let Some(last) = pan.replace(*pos) {
+                            view.center[0] -= (pos.x - last.x) / view.zoom * if xf.flip { -1.0 } else { 1.0 };
+                            view.center[1] -= (pos.y - last.y) / view.zoom;
+                        }
+                    }
+                    egui::TouchPhase::End | egui::TouchPhase::Cancel => pan = None,
+                }
+            }
+        }
+        app.ui.touch_pan = pan;
+        events.iter().any(|e| matches!(e, egui::Event::Touch { .. }))
+    };
+
     // Pen pressure/tilt for this frame's tool events (mouse = 1.0), unless Preferences › Tools ›
     // Use Tablet Pressure is off; the pen's eraser end selects the Eraser.
     app.stylus.use_pressure = app.session.prefs().tools.use_tablet_pressure;
@@ -3161,6 +3189,11 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
         // (Preferences › Tools, `paint_mouse`).
         crate::paint_mouse::sync_tool_brush(app);
         let mut buttons = crate::paint_mouse::canvas_buttons(app, &response, tool);
+        // A finger never paints (Photoshop's touch behaviour): drop tool gestures started by
+        // touch, the canvas above pans them instead.
+        if touch_frame || app.ui.touch_pan.is_some() {
+            (buttons.started, buttons.dragged, buttons.stopped, buttons.clicked) = (false, false, false, false);
+        }
         // The Crop tool's frame is edited from the press (before egui's drag threshold), so the
         // pixels past the canvas show at once, as in Photoshop.
         if tool == Tool::Crop && response.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down()) && crate::crop_ui::press(app) {
