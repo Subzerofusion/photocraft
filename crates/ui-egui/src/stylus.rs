@@ -149,6 +149,10 @@ pub struct Stylus {
     /// Time of the tool event being processed, in milliseconds. The canvas spreads a frame's
     /// samples between the previous and the current frame time (egui's events carry none).
     pub(crate) clock_ms: f64,
+    /// The position and pressure last emitted for the current freehand drag: where the pressure
+    /// slope limiter (`paint::dynamics::limit_pressure_slope`) continues from. Cleared when a
+    /// stroke starts.
+    pub(crate) last_paint_pressure: Option<([f64; 2], f32)>,
 }
 
 impl Default for Stylus {
@@ -173,6 +177,7 @@ impl Default for Stylus {
             stroke: Vec::new(),
             times: Vec::new(),
             clock_ms: 0.0,
+            last_paint_pressure: None,
         }
     }
 }

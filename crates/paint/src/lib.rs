@@ -242,6 +242,26 @@ mod tests {
     use super::*;
     use photocraft_color::PixelFormat;
 
+    #[test]
+    fn pressure_lowpass_spreads_a_fast_collapse_smoothly_over_travel() {
+        use crate::dynamics::{PRESSURE_SMOOTH_LENGTH_DIAMETERS, limit_pressure_slope};
+        // A 10 px brush smooths drops over exp(-dist / 40 px).
+        let pos = [[0.0, 0.0], [10.0, 0.0], [20.0, 0.0], [30.0, 0.0]];
+        let out = limit_pressure_slope(None, &pos, &[1.0, 0.5, 0.0, 0.0], 10.0);
+        let k = 1.0 - (-10.0_f64 / (PRESSURE_SMOOTH_LENGTH_DIAMETERS * 10.0) as f64).exp() as f32;
+        assert!((out[0] - 1.0).abs() < 1e-6, "first point of a stroke is unconstrained");
+        assert!((out[1] - (1.0 + (0.5 - 1.0) * k)).abs() < 1e-4, "{out:?}");
+        assert!((out[2] - (out[1] + (0.0 - out[1]) * k)).abs() < 1e-4, "{out:?}");
+        assert!((out[3] - (out[2] + (0.0 - out[2]) * k)).abs() < 1e-4, "{out:?}");
+        assert!(out[1] > out[2] && out[2] > out[3], "smooth decay, no corners: {out:?}");
+        // Continuing a drag smooths against the previous point, not the batch's own start.
+        let more = limit_pressure_slope(Some(([30.0, 0.0], out[3])), &[[40.0, 0.0]], &[0.0], 10.0);
+        assert!((more[0] - (out[3] * (1.0 - k))).abs() < 1e-4, "{more:?}");
+        // A pressure rise tracks the pen instantly: no lag when pressing harder.
+        let rise = limit_pressure_slope(Some(([0.0, 0.0], 0.3)), &[[5.0, 0.0]], &[0.9], 10.0);
+        assert_eq!(rise[0], 0.9);
+    }
+
     fn stroke(points: &[(f64, f64)], size: f32) -> Stroke {
         Stroke {
             brush: BrushSettings { size, pressure_size: false, ..Default::default() },

@@ -162,6 +162,50 @@ pub fn smooth_points(cfg: &Smoothing, zoom: f32, pts: &[StrokePoint]) -> Vec<Str
 }
 
 // ---------------------------------------------------------------------------
+// Pressure slope limiting
+// ---------------------------------------------------------------------------
+
+/// Length constant of the distance low-pass on pen pressure, in brush diameters. Real pens
+/// collapse pressure to zero within a few milliseconds while a fast flick still travels
+/// (measured: 0.42 → 0.01 in ~20 ms over ~130 px), which renders as a sudden thick→thin
+/// shoulder followed by a hairline tip — the "rat tail". Low-passing pressure over travel with
+/// this length constant spreads the collapse over a smooth ~18-diameter wedge, what
+/// Krita/Photoshop show for the same stroke. Only drops are smoothed; a pressure rise tracks
+/// the pen instantly so pressing harder never feels laggy.
+pub const PRESSURE_SMOOTH_LENGTH_DIAMETERS: f32 = 4.0;
+
+/// Low-pass pen pressure over travel, continuing from `prev` (the position and pressure last
+/// emitted for the drag, if any): per step, pressure moves toward its target by
+/// `1 - exp(-dist / length)`, drops only — rises are passed through. Returns one pressure per
+/// entry of `positions` (parallel to `pressures`).
+///
+/// Pure and stateless so the canvas can own the drag-wide state; tests: `crate::tests`.
+pub fn limit_pressure_slope(prev: Option<([f64; 2], f32)>, positions: &[[f64; 2]], pressures: &[f32], brush_diameter: f32) -> Vec<f32> {
+    let length = (PRESSURE_SMOOTH_LENGTH_DIAMETERS * brush_diameter.max(1.0)) as f64;
+    let (mut last_pos, mut last_p) = match prev {
+        Some((p, v)) => (Some(p), Some(v)),
+        None => (positions.first().copied(), None), // the first point of a stroke is free
+    };
+    let mut out = Vec::with_capacity(pressures.len());
+    for (&pos, &target) in positions.iter().zip(pressures) {
+        let v = match last_p {
+            Some(last) if target < last => {
+                let d = last_pos.unwrap_or(pos);
+                let dist = (pos[0] - d[0]).hypot(pos[1] - d[1]);
+                // exp decay toward the target; sub-1 % residue never renders as a hairline.
+                let k = 1.0 - (-dist / length).exp();
+                last + (target - last) * k as f32
+            }
+            _ => target,
+        };
+        out.push(v);
+        last_pos = Some(pos);
+        last_p = Some(v);
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Path walking
 // ---------------------------------------------------------------------------
 

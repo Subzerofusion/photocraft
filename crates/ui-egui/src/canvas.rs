@@ -3308,6 +3308,8 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
             let d = xf.to_doc(p);
             // The press's own modifiers: a ⇧ that arrives with the click still connects the line.
             let press_mods = ui.input(|i| pointer_button_modifiers(&i.events, PointerButton::Primary)).unwrap_or(mods);
+            // A new stroke's first point is free of the pressure slope limiter.
+            app.stylus.last_paint_pressure = None;
             tool_event(app, ToolEvent::Down { x: d[0], y: d[1], pressure: app.stylus.pressure() }, press_mods);
             app.press_stroke = app.drag.is_some();
         }
@@ -3367,14 +3369,30 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
             app.defer_live_stroke = true;
             let base = app.stylus.last_point_ms().map_or(now_ms, |t| t.min(now_ms));
             let n = positions.len();
-            for (k, p) in positions.into_iter().enumerate() {
-                app.stylus.clock_ms = spread_ms(base, now_ms, k, n);
-                // This move's share of the pen samples the frame brought (pressure, tilt, rotation).
+            // Each move's share of the pen samples the frame brought (pressure, tilt, rotation).
+            let mut moves: Vec<([f64; 2], f32)> = Vec::with_capacity(n);
+            for (k, p) in positions.iter().enumerate() {
                 app.stylus.select(k, n);
-                let d = xf.to_doc(p);
-                tool_event(app, ToolEvent::Move { x: d[0], y: d[1], pressure: app.stylus.pressure() }, mods);
+                moves.push((xf.to_doc(*p), app.stylus.pressure()));
             }
             app.stylus.clear_selection();
+            // A fast flick's pressure collapse low-passed over travel, so the stroke tapers as a
+            // smooth wedge instead of a thick shoulder plus hairline ("rat tail"): freehand tools
+            // only, sized by the brush.
+            if freehand_tool(tool) && !moves.is_empty() {
+                let pts: Vec<[f64; 2]> = moves.iter().map(|(d, _)| [d[0], d[1]]).collect();
+                let pressures: Vec<f32> = moves.iter().map(|(_, p)| *p).collect();
+                let smoothed =
+                    photocraft_engine::paint::dynamics::limit_pressure_slope(app.stylus.last_paint_pressure, &pts, &pressures, app.session.tools.brush.size);
+                for (m, p) in moves.iter_mut().zip(smoothed) {
+                    m.1 = p;
+                }
+                app.stylus.last_paint_pressure = moves.last().copied();
+            }
+            for (k, (d, pressure)) in moves.into_iter().enumerate() {
+                app.stylus.clock_ms = spread_ms(base, now_ms, k, n);
+                tool_event(app, ToolEvent::Move { x: d[0], y: d[1], pressure }, mods);
+            }
             app.stylus.clock_ms = now_ms;
             // A held pen keeps the clock running for airbrush build-up and smoothing catch-up.
             if app.drag.is_some() && stroke_wants_time(app) {
